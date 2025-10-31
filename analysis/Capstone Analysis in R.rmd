@@ -1,0 +1,363 @@
+---
+title: "Capstone Analysis in R"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# ---- Libraries ----
+# Core
+library(readr); library(dplyr); library(tidyr); library(tibble)
+library(ggplot2); library(forcats); library(janitor); library(scales)
+
+# Modeling + resampling + metrics
+library(rsample); library(yardstick); library(broom); library(car)
+
+# Trees + Ensembles
+library(rpart); library(rpart.plot); library(randomForest); library(gbm)
+
+# Repro + paths
+library(here)
+library(rprojroot)
+
+repo_root <- rprojroot::find_root(rprojroot::has_dir("data"))
+knitr::opts_knit$set(root.dir = repo_root)
+
+# ---- Paths ----
+data_dir   <- "data"                    # repo-root/data
+fig_dir    <- "outputs/figures"
+out_models <- "outputs/models"
+out_tables <- "outputs/tables"
+
+dir.create(fig_dir,    recursive = TRUE, showWarnings = FALSE)
+dir.create(out_models, recursive = TRUE, showWarnings = FALSE)
+dir.create(out_tables, recursive = TRUE, showWarnings = FALSE)
+
+# ---- Color Palette ----
+ma_colors <- c(
+  red    = "#E31837",
+  gray   = "#717073",
+  black  = "#231F20",
+  teal   = "#00728F",
+  green  = "#A3A510",
+  orange = "#F3901D",
+  white  = "#FFFFFF"
+)
+pal_discrete <- c(ma_colors["red"], ma_colors["black"], ma_colors["gray"])
+pal_outcome  <- c("No" = ma_colors["red"], "Yes" = ma_colors["teal"])
+
+scale_color_ma <- function(..., discrete = TRUE) {
+  if (discrete) scale_color_manual(values = pal_discrete, ...)
+  else          scale_color_gradient(low = ma_colors["gray"], high = ma_colors["red"], ...)
+}
+scale_fill_ma <- function(..., discrete = TRUE) {
+  if (discrete) scale_fill_manual(values = pal_discrete, ...)
+  else          scale_fill_gradient(low = ma_colors["gray"], high = ma_colors["red"], ...)
+}
+theme_ma <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
+}
+
+# ---- Helpers ----
+to01 <- function(x){
+  sx <- tolower(trimws(as.character(x)))
+  ifelse(is.na(x), NA,
+         ifelse(sx %in% c("1","yes","y","true","t"), 1,
+         ifelse(sx %in% c("0","no","n","false","f"), 0,
+                suppressWarnings(ifelse(!is.na(as.numeric(sx)) & as.numeric(sx)!=0, 1, 0)))))
+}
+freeze_levels <- function(train_df, test_df, facs = c("gender","region","race")){
+  for (v in facs){
+    lv <- levels(train_df[[v]])
+    train_df[[v]] <- factor(train_df[[v]], levels = lv)
+    test_df[[v]]  <- forcats::fct_other(test_df[[v]], keep = lv)
+    test_df[[v]]  <- factor(test_df[[v]], levels = lv)
+  }
+  list(train = train_df, test = test_df)
+}
+predict_safe_glm <- function(fit, newdata){
+  eta <- suppressWarnings(predict(fit, newdata = newdata, type = "link"))
+  eta <- as.numeric(eta); eta[!is.finite(eta)] <- 0
+  plogis(pmin(pmax(eta, -35), 35))
+}
+
+write_txt <- function(x, path) writeLines(capture.output(x), path)
+
+# ---- Safe reader to protect private data ----
+safe_read <- function(fname, synth_fname = NULL, required = TRUE) {
+  real_p  <- file.path(data_dir, fname)
+  synth_p <- if (!is.null(synth_fname)) file.path(data_dir, "demo", synth_fname) else NA
+
+  if (file.exists(real_p)) {
+    readr::read_csv(real_p, show_col_types = FALSE)
+  } else if (!is.na(synth_p) && file.exists(synth_p)) {
+    message("Using synthetic data for: ", fname)
+    readr::read_csv(synth_p, show_col_types = FALSE)
+  } else if (isTRUE(required)) {
+    stop("Missing data: ", fname, " (and no synthetic fallback found).")
+  } else {
+    message("Optional file missing; skipping: ", fname)
+    NULL
+  }
+}
+
+# ---- Predictors ----
+predictors <- c("gpa","sports_count","fine_arts","ma_graduate",
+                "abs_percent","tardy_rate","fin_aid","free_lunch",
+                "gender","region","race")
+
+# ---- Reproducibility ----
+set.seed(123)
+```
+
+## Load Data
+
+```{r}
+# ---- Load Data (privacy-safe) ----
+ma_bench <- safe_read("FOR ANALYSIS - MA Benchmark.csv",  "synthetic_benchmark.csv")
+ma_pred  <- safe_read("FOR ANALYSIS - MA Predictive.csv", "synthetic_predictive.csv")
+
+ncaa <- safe_read("FOR ANALYSIS - NCAA.csv", required = FALSE)
+nfhs <- safe_read("FOR ANALYSIS - NFHS.csv", required = FALSE)
+```
+
+## RQ1 — Chi-square goodness-of-fit
+
+```{r}
+ma_bench <- ma_bench |>
+  mutate(college_athlete = to01(`College_Athletics_Participant`),
+         has_division = !is.na(`College_NCAA_Division`) & trimws(as.character(`College_NCAA_Division`)) != "",
+         college_athlete = ifelse(is.na(college_athlete) & has_division, 1, college_athlete))
+
+obs_tbl   <- table(ma_bench$college_athlete, useNA = "no")
+observed  <- c(Adv_College = as.integer(obs_tbl["1"]), Not_Adv = as.integer(obs_tbl["0"]))
+observed[is.na(observed)] <- 0
+
+expected_rate <- 0.063
+expected      <- c(Adv_College = sum(observed) * expected_rate,
+                   Not_Adv     = sum(observed) * (1 - expected_rate))
+
+chisq_out <- chisq.test(x = observed, p = expected/sum(expected))
+chisq_out
+```
+
+```{r}
+plot_rq1 <- tibble(
+  group = factor(c("Adv_College","Not_Adv"), levels = c("Adv_College","Not_Adv")),
+  Observed = as.numeric(observed),
+  Expected = as.numeric(expected)
+) |>
+  tidyr::pivot_longer(-group, names_to = "type", values_to = "count") |>
+  dplyr::mutate(
+    type = factor(type, levels = c("Expected","Observed")),
+    group = forcats::fct_recode(group,
+                                "Advanced" = "Adv_College",
+                                "Not Advanced" = "Not_Adv")
+  )
+
+p_rq1 <- ggplot(plot_rq1, aes(x = group, y = count, fill = type)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.62) +
+  # --- Use official brand palette ---
+  scale_fill_manual(
+    values = c("Expected" = "#717073",   # Cool Gray 9
+               "Observed" = "#E31837"),  # PMS 186 Red
+    name   = "Source",
+    labels = c("Expected" = "NCAA (baseline)",
+               "Observed" = "MA (observed)")
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "RQ1: Observed vs Expected Advancement",
+    x = NULL, y = "Count"
+  ) +
+  theme_ma()
+
+p_rq1
+ggsave(file.path(fig_dir, "rq1_observed_expected.png"),
+       p_rq1, width = 7, height = 5, dpi = 150)
+```
+
+## RQ2 — Logistic regression
+
+```{r}
+dfm <- ma_pred |>
+  mutate(
+    college_athlete = to01(`College_Athletics_Participant`),
+    has_division    = !is.na(`College_NCAA_Division`) & trimws(as.character(`College_NCAA_Division`)) != "",
+    college_athlete = ifelse(is.na(college_athlete) & has_division, 1, college_athlete),
+
+    gpa          = suppressWarnings(as.numeric(`Cumulative_GPA`)),
+    sports_count = suppressWarnings(as.numeric(`Total_Count_of_HS_Sports_All_Years`)),
+    fine_arts    = ifelse(suppressWarnings(as.numeric(`Years_As_Fine_Arts`)) > 0, 1, 0),
+    ma_graduate  = to01(`MA_Graduate`),
+
+    abs_percent_raw = suppressWarnings(as.numeric(`Percentage_of_Absences_All_Years`)),
+    abs_percent = ifelse(is.na(abs_percent_raw), NA_real_,
+                         ifelse(abs_percent_raw > 1, abs_percent_raw/100, abs_percent_raw)),
+
+    days_enrolled = suppressWarnings(as.numeric(`Total_Days_Enrolled_MA_All_Years`)),
+    tardies       = suppressWarnings(as.numeric(`Total_Number_Tardies_All_Years`)),
+    tardy_rate    = ifelse(is.na(days_enrolled) | days_enrolled == 0, NA_real_, tardies / days_enrolled),
+
+    fin_aid      = to01(`MA_Financial_Aid`),
+    free_lunch   = to01(`Federal_Free_Lunch`),
+
+    gender       = factor(`Gender`),
+    region       = factor(`Region_City_Based`),
+    race         = factor(`Reported_Federal_Race`)
+  ) |>
+  filter(!is.na(college_athlete),
+         is.finite(gpa),
+         is.finite(sports_count),
+         is.finite(abs_percent),
+         is.finite(tardy_rate)) |>
+  mutate(college_athlete = as.integer(college_athlete))
+
+form <- as.formula(
+  "college_athlete ~ gpa + sports_count + fine_arts + ma_graduate +
+   abs_percent + tardy_rate + fin_aid + free_lunch +
+   gender + region + race"
+)
+
+# Train/Test split
+spl      <- initial_split(dfm, prop = 0.80, strata = college_athlete)
+train_df <- training(spl); test_df <- testing(spl)
+lvz      <- freeze_levels(train_df, test_df); train_df <- lvz$train; test_df <- lvz$test
+
+# Fit and evaluate
+logit_fit  <- glm(form, data = train_df, family = binomial())
+test_probs <- predict_safe_glm(logit_fit, test_df)
+test_pred  <- as.integer(test_probs >= 0.5)
+
+eval_df <- tibble(
+  truth       = factor(test_df$college_athlete, levels = c(0,1), labels = c("No","Yes")),
+  .pred_Yes   = test_probs,
+  .pred_class = factor(test_pred, levels = c(0,1), labels = c("No","Yes"))
+)
+
+acc <- accuracy(eval_df, truth, .pred_class)$.estimate
+auc <- roc_auc(eval_df, truth, .pred_Yes, event_level = "second")$.estimate
+cm  <- conf_mat(eval_df, truth, .pred_class)
+
+acc; auc; cm
+
+# Odds ratios
+or_tab <- tidy(logit_fit, conf.int = TRUE, exponentiate = TRUE) |>
+  arrange(p.value)
+head(or_tab, 12)
+```
+
+## VIF Testing for Multicollinearity
+
+```{r}
+vif(logit_fit)
+v <- vif(logit_fit)
+vif_tbl <- tibble(term = names(v), VIF = as.numeric(v))
+readr::write_csv(vif_tbl, file.path(out_tables, "rq2_vif_R.csv"))
+vif_tbl
+```
+
+## Decision tree
+
+```{r}
+tree_fit <- rpart(
+  form, data = train_df, method = "class",
+  control = rpart.control(maxdepth = 4, minbucket = 15, cp = 0.001)
+)
+
+tree_prob <- predict(tree_fit, newdata = test_df, type = "prob")[, "1"]
+tree_pred <- ifelse(tree_prob >= 0.5, 1, 0)
+
+tree_acc <- mean(tree_pred == test_df$college_athlete)
+
+# quick AUC via yardstick
+tree_eval <- tibble(
+  truth = factor(test_df$college_athlete, levels = c(0,1), labels = c("No","Yes")),
+  .pred_Yes = tree_prob,
+  .pred_class = factor(ifelse(tree_prob>=0.5, "Yes", "No"), levels = c("No","Yes"))
+)
+tree_auc <- roc_auc(tree_eval, truth, .pred_Yes, event_level = "second")$.estimate
+
+tree_acc; tree_auc
+
+# Tree plot with brand colors for class boxes
+png(file.path(fig_dir, "rq2_decision_tree_R.png"), width = 1400, height = 900, res = 150)
+rpart.plot(
+  tree_fit, type = 2, extra = 104, under = TRUE,
+  faclen = 20, fallen.leaves = TRUE, tweak = 1.0,
+  box.palette = c(ma_colors["red"], ma_colors["teal"])  # "No" vs "Yes"
+)
+dev.off()
+```
+
+## Save key outputs
+
+```{r}
+write_txt(summary(logit_fit), file.path(out_models, "rq2_logit_summary_R.txt"))
+```
+
+## ROC - GLM vs Random Forest vs GBM
+
+```{r}
+# --- Random Forest (minimal, for ROC only) ---
+rf_train <- train_df %>%
+  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch), ~ as.integer(replace(., is.na(.), 0))))
+rf_test  <- test_df  %>%
+  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch), ~ as.integer(replace(., is.na(.), 0))))
+
+for (v in c("gender","region","race")) {
+  rf_train[[v]] <- fct_explicit_na(as.factor(rf_train[[v]]), na_level = "Unknown")
+  tmp <- fct_explicit_na(as.factor(rf_test[[v]]),  na_level = "Unknown")
+  rf_test[[v]]  <- fct_other(tmp, keep = levels(rf_train[[v]]))
+  rf_test[[v]]  <- factor(rf_test[[v]], levels = levels(rf_train[[v]]))
+}
+
+rf_fit  <- randomForest(as.factor(college_athlete) ~ ., data = rf_train[, c("college_athlete", predictors)],
+                        ntree = 500, mtry = 3, importance = FALSE)
+rf_prob <- predict(rf_fit, newdata = rf_test[, c("college_athlete", predictors)], type = "prob")[,"1"]
+
+# --- GBM (minimal, for ROC only) ---
+gbm_form <- college_athlete ~ gpa + sports_count + fine_arts + ma_graduate +
+  abs_percent + tardy_rate + fin_aid + free_lunch + gender + region + race
+
+gbm_fit <- gbm(
+  formula = gbm_form, data = train_df, distribution = "bernoulli",
+  n.trees = 1200, interaction.depth = 3, shrinkage = 0.01,
+  n.minobsinnode = 10, bag.fraction = 0.8, train.fraction = 1.0, verbose = FALSE
+)
+best_trees <- tryCatch(gbm.perf(gbm_fit, method = "OOB", plot.it = FALSE), error = function(e) 1200)
+gbm_prob   <- predict(gbm_fit, newdata = test_df, n.trees = best_trees, type = "response")
+
+# --- ROC overlay ---
+comb <- tibble(
+  truth    = factor(test_df$college_athlete, levels = c(0,1), labels = c("No","Yes")),
+  prob_glm = test_probs,
+  prob_rf  = rf_prob,
+  prob_gbm = gbm_prob
+) |>
+  pivot_longer(starts_with("prob_"), names_to = "model", values_to = "prob")
+
+label_map <- c(prob_glm = "GLM (Logit)", prob_rf = "Random Forest", prob_gbm = "GBM")
+
+roc_df <- bind_rows(
+  roc_curve(tibble(truth = comb$truth[comb$model=="prob_glm"], .pred = comb$prob[comb$model=="prob_glm"]), truth, .pred) |> mutate(model = "GLM (Logit)"),
+  roc_curve(tibble(truth = comb$truth[comb$model=="prob_rf"],  .pred = comb$prob[comb$model=="prob_rf"]),  truth, .pred) |> mutate(model = "Random Forest"),
+  roc_curve(tibble(truth = comb$truth[comb$model=="prob_gbm"], .pred = comb$prob[comb$model=="prob_gbm"]), truth, .pred) |> mutate(model = "GBM")
+)
+
+p_roc <- ggplot(roc_df, aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path(linewidth = 1) +
+  geom_abline(linetype = 2) +
+  scale_color_manual(values = c("GLM (Logit)" = ma_colors["black"],
+                                "Random Forest" = ma_colors["teal"],
+                                "GBM" = ma_colors["red"])) +
+  labs(title = "ROC Curves (Test Set)", x = "1 - Specificity", y = "Sensitivity", color = NULL) +
+  theme_ma()
+ggsave(file.path(fig_dir, "roc_overlay.png"), p_roc, width = 7, height = 5, dpi = 150)
+```
