@@ -19,7 +19,7 @@ It compares institutional advancement rates to national NCAA benchmarks and eval
 
 ```text
 analysis/
-├── Week6_analysis.Rmd        # Primary R Markdown file (RQ1 & RQ2 analyses)
+├── Capstone-Analysis-in-R.Rmd        # Primary R Markdown file (RQ1 & RQ2 analyses)
 ├── outputs/
 │   ├── figures/              # Saved plots and visualizations (.png)
 │   ├── models/               # Model objects and summaries (.txt, .rds)
