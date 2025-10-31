@@ -1,0 +1,11 @@
+College_Athletics_Participant,College_NCAA_Division,Cumulative_GPA,Total_Count_of_HS_Sports_All_Years,Years_As_Fine_Arts,MA_Graduate,Percentage_of_Absences_All_Years,Total_Days_Enrolled_MA_All_Years,Total_Number_Tardies_All_Years,MA_Financial_Aid,Federal_Free_Lunch,Gender,Region_City_Based,Reported_Federal_Race
+1,II,3.62,2,0,1,3.1,620,8,1,0,Female,Metro,White
+0,,3.05,1,2,1,5.0,720,12,0,0,Male,Suburban,Black
+1,III,3.88,3,0,1,1.2,540,4,0,0,Female,Greater MN,Asian
+0,,2.71,0,1,0,8.4,365,22,1,1,Male,Out-of-State,Hispanic
+0,,3.32,2,0,1,2.0,680,6,0,0,Female,Metro,Two or more
+1,I,3.91,4,0,1,0.7,510,3,1,0,Male,Suburban,White
+0,,2.95,1,3,1,6.2,590,15,0,0,Female,Metro,Other
+1,III,3.47,2,0,1,4.1,710,5,1,0,Male,Greater MN,White
+0,,3.10,0,2,0,9.0,300,18,0,1,Female,Out-of-State,Black
+1,II,3.55,3,0,1,1.8,650,7,0,0,Male,Metro,Hispanic
