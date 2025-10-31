@@ -1,0 +1,6 @@
+
+	Chi-squared test for given probabilities
+
+data:  observed
+X-squared = 2185.8, df = 1, p-value < 2.2e-16
+

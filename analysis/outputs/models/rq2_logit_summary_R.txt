@@ -1,0 +1,38 @@
+
+Call:
+glm(formula = form, family = binomial(), data = train_df)
+
+Coefficients:
+                                  Estimate Std. Error z value Pr(>|z|)   
+(Intercept)                      -17.69149 2731.88562  -0.006  0.99483   
+gpa                                0.16262    0.29556   0.550  0.58218   
+sports_count                       0.15161    0.05230   2.899  0.00375 **
+fine_arts                         -1.29543    0.77096  -1.680  0.09290 . 
+ma_graduate                       -0.71626    0.45930  -1.559  0.11889   
+abs_percent                        6.29648    3.37427   1.866  0.06204 . 
+tardy_rate                        -1.63536    1.89352  -0.864  0.38777   
+fin_aid                            0.57740    0.31138   1.854  0.06369 . 
+free_lunch                       -15.52094 3956.18036  -0.004  0.99687   
+gender1                           -0.07393    0.30430  -0.243  0.80803   
+regionEast Metro                   0.22473    0.60404   0.372  0.70986   
+regionGreater MN / Out-of-State   -0.54548    1.29481  -0.421  0.67355   
+regionNorth Metro                  0.76346    0.56228   1.358  0.17452   
+regionSouth Metro                  0.31535    0.53484   0.590  0.55545   
+regionWest Metro                   0.52118    0.56430   0.924  0.35570   
+race2                             -0.63090 2987.31779   0.000  0.99983   
+race3                             15.12005 2731.88542   0.006  0.99558   
+race4                             15.36710 2731.88544   0.006  0.99551   
+race5                             -1.24937 3766.81215   0.000  0.99974   
+race6                             14.99384 2731.88540   0.005  0.99562   
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+(Dispersion parameter for binomial family taken to be 1)
+
+    Null deviance: 343.59  on 405  degrees of freedom
+Residual deviance: 314.25  on 386  degrees of freedom
+  (237 observations deleted due to missingness)
+AIC: 354.25
+
+Number of Fisher Scoring iterations: 16
+

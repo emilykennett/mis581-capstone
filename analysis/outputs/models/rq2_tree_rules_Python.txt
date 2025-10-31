@@ -1,0 +1,25 @@
+|--- ma_graduate <= 0.50
+|   |--- sports_count <= 0.50
+|   |   |--- class: 0
+|   |--- sports_count >  0.50
+|   |   |--- gpa <= 2.88
+|   |   |   |--- class: 0
+|   |   |--- gpa >  2.88
+|   |   |   |--- class: 1
+|--- ma_graduate >  0.50
+|   |--- abs_total <= 36.76
+|   |   |--- gpa <= 4.22
+|   |   |   |--- sports_count <= 7.50
+|   |   |   |   |--- class: 0
+|   |   |   |--- sports_count >  7.50
+|   |   |   |   |--- class: 0
+|   |   |--- gpa >  4.22
+|   |   |   |--- class: 0
+|   |--- abs_total >  36.76
+|   |   |--- race_3 <= 0.50
+|   |   |   |--- abs_total <= 38.24
+|   |   |   |   |--- class: 0
+|   |   |   |--- abs_total >  38.24
+|   |   |   |   |--- class: 0
+|   |   |--- race_3 >  0.50
+|   |   |   |--- class: 1
