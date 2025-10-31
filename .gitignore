@@ -1,0 +1,17 @@
+data/**
+!data/README.md
+!data/demo/**
+
+# R cruft
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# macOS
+.DS_Store
+
+# big/reproducible outputs
+outputs/models/
+outputs/*.rds
+outputs/*.RData
