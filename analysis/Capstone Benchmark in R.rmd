@@ -1,0 +1,209 @@
+---
+title: "Capstone Benchmark in R"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# ---- Libraries ----
+library(readr); library(dplyr); library(tidyr); library(tibble)
+library(ggplot2); library(forcats); library(janitor); library(scales)
+library(stringr); library(purrr)
+library(here); library(rprojroot)
+
+# ---- Repo root & directories ----
+repo_root <- rprojroot::find_root(rprojroot::has_dir("data"))
+knitr::opts_knit$set(root.dir = repo_root)
+
+data_dir   <- "data"
+fig_dir    <- "outputs/figures"
+out_tables <- "outputs/tables"
+dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(out_tables, recursive = TRUE, showWarnings = FALSE)
+
+# ---- Brand palette ----
+ma_colors <- c(
+  red    = "#E31837",
+  gray   = "#717073",
+  black  = "#231F20",
+  teal   = "#00728F",
+  green  = "#A3A510",
+  orange = "#F3901D",
+  white  = "#FFFFFF"
+)
+theme_ma <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
+}
+
+# ---- Helper: Safe Reader ----
+safe_read <- function(fname, synth_fname = NULL, required = TRUE) {
+  real_p  <- file.path(data_dir, fname)
+  synth_p <- if (!is.null(synth_fname)) file.path(data_dir, "demo", synth_fname) else NA
+  if (file.exists(real_p)) {
+    readr::read_csv(real_p, show_col_types = FALSE)
+  } else if (!is.na(synth_p) && file.exists(synth_p)) {
+    message("Using synthetic data for: ", fname)
+    readr::read_csv(synth_p, show_col_types = FALSE)
+  } else if (isTRUE(required)) {
+    stop("Missing data: ", fname, " (and no synthetic fallback).")
+  } else {
+    message("Optional file missing; skipping: ", fname)
+    NULL
+  }
+}
+```
+
+## Load Data
+```{r}
+ma_raw   <- safe_read("FOR ANALYSIS - MA Benchmark.csv",  "synthetic_benchmark.csv", required = TRUE)
+ncaa_raw <- safe_read("FOR ANALYSIS - NCAA.csv",          "synthetic_ncaa.csv",      required = FALSE)
+nfhs_raw <- safe_read("FOR ANALYSIS - NFHS.csv",          "synthetic_nfhs.csv",      required = FALSE)
+
+ma   <- ma_raw   %>% clean_names()
+ncaa <- (ncaa_raw %||% tibble()) %>% clean_names()
+nfhs <- (nfhs_raw %||% tibble()) %>% clean_names()
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+```
+
+## Normalize Types
+```{r}
+if (nrow(ncaa)) {
+  ncaa <- ncaa %>%
+    mutate(
+      sport_code = as.integer(sport_code),
+      gender     = as.integer(gender),
+      hs_participants_2022_23   = parse_number(as.character(hs_participants_2022_23)),
+      ncaa_participants_2022_23 = parse_number(as.character(ncaa_participants_2022_23)),
+      pct_hs_to_ncaa_overall    = parse_number(as.character(pct_hs_to_ncaa_overall))/100
+    )
+}
+
+if (nrow(nfhs)) {
+  nfhs <- nfhs %>%
+    mutate(sport_code = as.integer(sport_code)) %>%
+    mutate(across(where(is.character) & matches("_participants_\\d{4}_\\d{2}$"), parse_number))
+}
+
+ma <- ma %>%
+  mutate(
+    gender = as.integer(gender),
+    college_sport_code_1 = as.integer(college_sport_code_1),
+    college_sport_code_2 = as.integer(college_sport_code_2)
+  )
+```
+
+## Sport Lookup
+```{r}
+sport_lookup <- tribble(
+  ~sport_code, ~sport_name,
+  1, "Basketball", 2, "Cross Country", 3, "Football", 4, "Soccer",
+  5, "Track & Field", 6, "Volleyball", 7, "Less Common (with MA Athletes)",
+  8, "Alpine Skiing", 9, "Lacrosse", 10, "Less Common (No MA College)", 0, "None"
+)
+```
+
+## Build MA HS & College Counts
+```{r}
+sport_cols <- ma %>% select(matches("^(fall|winter|spring)(_2)?_sport_code_\\d{4}_\\d{2}$")) %>% names()
+
+ma_hs_long <- ma %>%
+  select(identifier, gender, all_of(sport_cols)) %>%
+  pivot_longer(cols = all_of(sport_cols), values_to = "sport_code") %>%
+  mutate(sport_code = as.integer(sport_code)) %>%
+  filter(!is.na(sport_code), sport_code > 0)
+
+ma_hs_by_gender <- ma_hs_long %>%
+  distinct(identifier, gender, sport_code) %>%
+  count(sport_code, gender, name = "ma_hs_participants")
+
+ma_college_long <- ma %>%
+  select(identifier, gender, college_sport_code_1, college_sport_code_2) %>%
+  pivot_longer(cols = starts_with("college_sport_code_"), values_to = "sport_code") %>%
+  mutate(sport_code = as.integer(sport_code)) %>%
+  filter(!is.na(sport_code), sport_code > 0) %>%
+  distinct(identifier, gender, sport_code)
+
+ma_college_by_gender <- ma_college_long %>% count(sport_code, gender, name = "ma_college_athletes")
+```
+
+## Merge with NCAA & NFHS
+```{r}
+# NFHS by gender
+nfhs_g <- if (nrow(nfhs)) {
+  nfhs %>%
+    select(sport_code, boys_participants_2024_25, girls_participants_2024_25) %>%
+    pivot_longer(cols = starts_with(c("boys", "girls")), names_to = "gender_col", values_to = "nfhs_participants") %>%
+    mutate(gender = if_else(str_detect(gender_col, "boys"), 0L, 1L)) %>%
+    select(sport_code, gender, nfhs_participants)
+} else tibble()
+
+# NCAA by gender
+ncaa_g <- if (nrow(ncaa)) {
+  ncaa %>% select(sport_code, gender, hs_participants_2022_23, ncaa_participants_2022_23, pct_hs_to_ncaa_overall)
+} else tibble()
+```
+
+## Combine and Calculate Rates
+```{r}
+benchmark_by_gender <- ma_hs_by_gender %>%
+  full_join(ma_college_by_gender, by = c("sport_code","gender")) %>%
+  mutate(
+    ma_hs_participants  = replace_na(ma_hs_participants, 0L),
+    ma_college_athletes = replace_na(ma_college_athletes, 0L),
+    ma_adv_rate = if_else(ma_hs_participants > 0, ma_college_athletes / ma_hs_participants, NA_real_)
+  ) %>%
+  left_join(ncaa_g, by = c("sport_code","gender")) %>%
+  left_join(nfhs_g,  by = c("sport_code","gender")) %>%
+  left_join(sport_lookup, by = "sport_code")
+
+readr::write_csv(benchmark_by_gender, file.path(out_tables, "benchmark_by_gender.csv"))
+head(benchmark_by_gender, 10)
+```
+
+## Quick Plot
+```{r}
+if (nrow(benchmark_by_gender)) {
+  benchmark_by_gender %>%
+    mutate(Gender = if_else(gender == 0L, "Male", "Female")) %>%
+    ggplot(aes(x = fct_reorder(sport_name, sport_code))) +
+    geom_col(aes(y = ma_adv_rate, fill = "MA"), position = "dodge") +
+    geom_col(aes(y = pct_hs_to_ncaa_overall, fill = "NCAA"), position = "dodge", alpha = 0.6) +
+    facet_wrap(~Gender) +
+    scale_fill_manual(values = c("MA" = ma_colors["red"], "NCAA" = ma_colors["gray"])) +
+    labs(title = "MA vs NCAA Advancement Rates by Sport",
+         x = "Sport", y = "Advancement Rate", fill = NULL) +
+    theme_ma() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Save Combined View
+```{r}
+ma_combined <- ma_hs_long %>%
+  distinct(identifier, sport_code) %>%
+  count(sport_code, name = "ma_hs_participants_all_gender")
+
+ma_college_combined <- ma_college_long %>%
+  distinct(identifier, sport_code) %>%
+  count(sport_code, name = "ma_college_athletes_all_gender")
+
+benchmark_combined <- ma_combined %>%
+  full_join(ma_college_combined, by = "sport_code") %>%
+  mutate(
+    ma_adv_rate_all_gender = if_else(ma_hs_participants_all_gender > 0,
+                                     ma_college_athletes_all_gender / ma_hs_participants_all_gender,
+                                     NA_real_)
+  ) %>%
+  left_join(sport_lookup, by = "sport_code")
+
+readr::write_csv(benchmark_combined, file.path(out_tables, "benchmark_combined.csv"))
+benchmark_combined %>% head(10)
+```
+
