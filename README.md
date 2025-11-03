@@ -8,6 +8,7 @@ This repository contains the full analytical workflow and outputs for Emily Kenn
 mis581-capstone/
 ├── analysis/
 │   ├── Capstone-Analysis-in-R.Rmd                # R-based analysis (data prep, modeling, visualization)
+│   ├── Capstone-Benchmark-in-R.Rmd               # R-based benchmark (data prep, merge and compare datasets, visualization)
 │   ├── Capstone-Analysis-in-Python.ipynb         # Python-based analysis (additional modeling & validation)
 │   └── outputs/                                  # Generated analysis outputs
 │       ├── figures/                              # Visualizations and plots
