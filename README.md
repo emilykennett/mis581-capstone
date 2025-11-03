@@ -7,14 +7,24 @@ This repository contains the full analytical workflow and outputs for Emily Kenn
 ```text
 mis581-capstone/
 ├── analysis/
-│   ├── Capstone-Analysis-in-R.Rmd
-│   ├── Capstone-Analysis-in-Python.ipynb
-│   └── outputs/
-│       ├── figures/
-│       ├── models/
-│       └── tables/
+│   ├── Capstone-Analysis-in-R.Rmd                # R-based analysis (data prep, modeling, visualization)
+│   ├── Capstone-Analysis-in-Python.ipynb         # Python-based analysis (additional modeling & validation)
+│   └── outputs/                                  # Generated analysis outputs
+│       ├── figures/                              # Visualizations and plots
+│       ├── models/                               # Model summaries and performance metrics
+│       └── tables/                               # Cleaned tables and exported data summaries
+│
 ├── data/
-│   └── demo/
+│   └── demo/                                     # Anonymized or synthetic sample datasets
+│       ├── FOR ANALYSIS - NCAA.csv
+│       ├── FOR ANALYSIS - NFHS.csv
+│       ├── synthetic_benchmark.csv
+│       └── synthetic_predictive.csv
+│
+├── presentation/
+│   └── Small School, Big Impact.pptx             # Final Capstone presentation slides
+│
+├── .gitignore
 └── README.md
 ```
 
