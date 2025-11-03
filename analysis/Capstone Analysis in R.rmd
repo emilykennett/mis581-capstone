@@ -18,7 +18,7 @@ library(ggplot2); library(forcats); library(janitor); library(scales)
 library(rsample); library(yardstick); library(broom); library(car)
 
 # Trees + Ensembles
-library(rpart); library(rpart.plot); library(randomForest); library(gbm)
+library(rpart); library(rpart.plot); library(randomForest); library(gbm); library (pROC)
 
 # Repro + paths
 library(here)
@@ -307,9 +307,11 @@ write_txt(summary(logit_fit), file.path(out_models, "rq2_logit_summary_R.txt"))
 ```{r}
 # --- Random Forest (minimal, for ROC only) ---
 rf_train <- train_df %>%
-  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch), ~ as.integer(replace(., is.na(.), 0))))
+  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch),
+                ~ as.integer(replace(., is.na(.), 0))))
 rf_test  <- test_df  %>%
-  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch), ~ as.integer(replace(., is.na(.), 0))))
+  mutate(across(c(fine_arts, ma_graduate, fin_aid, free_lunch),
+                ~ as.integer(replace(., is.na(.), 0))))
 
 for (v in c("gender","region","race")) {
   rf_train[[v]] <- fct_explicit_na(as.factor(rf_train[[v]]), na_level = "Unknown")
@@ -318,7 +320,8 @@ for (v in c("gender","region","race")) {
   rf_test[[v]]  <- factor(rf_test[[v]], levels = levels(rf_train[[v]]))
 }
 
-rf_fit  <- randomForest(as.factor(college_athlete) ~ ., data = rf_train[, c("college_athlete", predictors)],
+rf_fit  <- randomForest(as.factor(college_athlete) ~ ., 
+                        data = rf_train[, c("college_athlete", predictors)],
                         ntree = 500, mtry = 3, importance = FALSE)
 rf_prob <- predict(rf_fit, newdata = rf_test[, c("college_athlete", predictors)], type = "prob")[,"1"]
 
@@ -334,7 +337,7 @@ gbm_fit <- gbm(
 best_trees <- tryCatch(gbm.perf(gbm_fit, method = "OOB", plot.it = FALSE), error = function(e) 1200)
 gbm_prob   <- predict(gbm_fit, newdata = test_df, n.trees = best_trees, type = "response")
 
-# --- ROC overlay ---
+# --- Build combined long df for yardstick ROC curves ---
 comb <- tibble(
   truth    = factor(test_df$college_athlete, levels = c(0,1), labels = c("No","Yes")),
   prob_glm = test_probs,
@@ -343,21 +346,84 @@ comb <- tibble(
 ) |>
   pivot_longer(starts_with("prob_"), names_to = "model", values_to = "prob")
 
-label_map <- c(prob_glm = "GLM (Logit)", prob_rf = "Random Forest", prob_gbm = "GBM")
+# Yardstick ROC curve points for each model
+roc_glm_df <- roc_curve(
+  tibble(truth = comb$truth[comb$model=="prob_glm"], .pred = comb$prob[comb$model=="prob_glm"]),
+  truth, .pred
+) |> mutate(model = "GLM (Logit)")
 
-roc_df <- bind_rows(
-  roc_curve(tibble(truth = comb$truth[comb$model=="prob_glm"], .pred = comb$prob[comb$model=="prob_glm"]), truth, .pred) |> mutate(model = "GLM (Logit)"),
-  roc_curve(tibble(truth = comb$truth[comb$model=="prob_rf"],  .pred = comb$prob[comb$model=="prob_rf"]),  truth, .pred) |> mutate(model = "Random Forest"),
-  roc_curve(tibble(truth = comb$truth[comb$model=="prob_gbm"], .pred = comb$prob[comb$model=="prob_gbm"]), truth, .pred) |> mutate(model = "GBM")
+roc_rf_df  <- roc_curve(
+  tibble(truth = comb$truth[comb$model=="prob_rf"], .pred = comb$prob[comb$model=="prob_rf"]),
+  truth, .pred
+) |> mutate(model = "Random Forest")
+
+roc_gbm_df <- roc_curve(
+  tibble(truth = comb$truth[comb$model=="prob_gbm"], .pred = comb$prob[comb$model=="prob_gbm"]),
+  truth, .pred
+) |> mutate(model = "GBM")
+
+roc_df <- bind_rows(roc_glm_df, roc_rf_df, roc_gbm_df)
+
+# --- Compute AUCs (for caption + CSV) ---
+auc_glm <- roc_auc(
+  tibble(truth = comb$truth[comb$model=="prob_glm"], .pred = comb$prob[comb$model=="prob_glm"]),
+  truth, .pred, event_level = "second"
+)$.estimate
+
+auc_rf  <- roc_auc(
+  tibble(truth = comb$truth[comb$model=="prob_rf"], .pred = comb$prob[comb$model=="prob_rf"]),
+  truth, .pred, event_level = "second"
+)$.estimate
+
+auc_gbm <- roc_auc(
+  tibble(truth = comb$truth[comb$model=="prob_gbm"], .pred = comb$prob[comb:model=="prob_gbm"]),
+  truth, .pred, event_level = "second"
+)$.estimate
+
+auc_tbl <- tibble(
+  model = c("GLM (Logit)", "Random Forest", "GBM"),
+  auc   = c(auc_glm, auc_rf, auc_gbm)
 )
+readr::write_csv(auc_tbl, file.path(out_tables, "roc_aucs_R.csv"))
 
+# --- Base ROC plot (yardstick) ---
 p_roc <- ggplot(roc_df, aes(x = 1 - specificity, y = sensitivity, color = model)) +
   geom_path(linewidth = 1) +
   geom_abline(linetype = 2) +
-  scale_color_manual(values = c("GLM (Logit)" = ma_colors["black"],
-                                "Random Forest" = ma_colors["teal"],
-                                "GBM" = ma_colors["red"])) +
-  labs(title = "ROC Curves (Test Set)", x = "1 - Specificity", y = "Sensitivity", color = NULL) +
+  scale_color_manual(values = c(
+    "GLM (Logit)"   = ma_colors["teal"],   # GLM = teal so band matches
+    "Random Forest" = ma_colors["black"],
+    "GBM"           = ma_colors["red"]
+  )) +
+  labs(
+    title  = "ROC Curves (Test Set)",
+    x = "1 - Specificity", y = "Sensitivity", color = NULL,
+    caption = paste0("AUCs — GLM: ", scales::number(auc_glm, accuracy = 0.001),
+                     " | RF: ",      scales::number(auc_rf,  accuracy = 0.001),
+                     " | GBM: ",     scales::number(auc_gbm, accuracy = 0.001))
+  ) +
   theme_ma()
-ggsave(file.path(fig_dir, "roc_overlay.png"), p_roc, width = 7, height = 5, dpi = 150)
+
+# --- GLM CI band with pROC (computed on GLM only) ---
+# pROC expects response as factor (pos = "Yes") and numeric predictor
+truth_glm <- factor(test_df$college_athlete, levels = c(0,1), labels = c("No","Yes"))
+roc_glm_p <- pROC::roc(response = truth_glm, predictor = test_probs,
+                       levels = c("No","Yes"), direction = "<", quiet = TRUE)
+
+ci_glm <- pROC::ci.se(roc_glm_p, specificities = seq(0, 1, by = 0.02))
+ci_df <- tibble(
+  specificity = as.numeric(rownames(ci_glm)),
+  sens_low = ci_glm[,1], sens_mid = ci_glm[,2], sens_high = ci_glm[,3]
+)
+
+p_roc_band <- p_roc +
+  geom_ribbon(data = ci_df,
+              aes(x = 1 - specificity, ymin = sens_low, ymax = sens_high),
+              inherit.aes = FALSE, alpha = 0.12, fill = ma_colors["teal"])
+
+# ---- Save figure ----
+ggsave(file.path(fig_dir, "roc_overlay_with_ci.png"),
+       p_roc_band, width = 7, height = 5, dpi = 150)
+
+p_roc_band
 ```
